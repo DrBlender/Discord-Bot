@@ -29,12 +29,19 @@ db_config = {
 def get_db_connection():
     return mysql.connector.connect(**db_config)
 
+# 🔹 Hilfsfunktion zur Rollenprüfung
+def is_admin(user: discord.Member):
+    return any(role.name == "🔧 Admin" for role in user.roles)
+
+def is_active_streamer(user: discord.Member):
+    return any(role.name == "🔥 Aktive Streamer" for role in user.roles)
+
 # ✅ Punkte anzeigen
 @tree.command(name="punkte", description="Zeigt die aktuellen Punkte eines Streamers an.")
 async def punkte(interaction: discord.Interaction, member: discord.Member):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT gesamt_punkte, monatliche_punkte, shopping_punkte FROM streamer_punkte WHERE discord_name = %s", (str(member),))
+    cursor.execute("SELECT gesamt_punkte, monatliche_punkte, shopping_punkte FROM streamer_punkte WHERE discord_id = %s", (member.id,))
     result = cursor.fetchone()
     conn.close()
 
@@ -48,61 +55,41 @@ async def punkte(interaction: discord.Interaction, member: discord.Member):
     else:
         await interaction.response.send_message(f"⚠ **{member.display_name}** ist nicht in der Datenbank!", ephemeral=True)
 
-# ✅ Punkte durch Streamdauer & Peak-Zuschauer berechnen
-@tree.command(name="streaminfo", description="Berechnet Punkte basierend auf Peak-Zuschauer und Streamdauer.")
+# ✅ Punkte durch Streamdauer & Peak-Zuschauer berechnen (Nur für Admins)
+@tree.command(name="streaminfo", description="Admin: Berechnet Punkte basierend auf Peak-Zuschauer und Streamdauer.")
 async def streaminfo(interaction: discord.Interaction, member: discord.Member, peak: int, dauer: int):
+    if not is_admin(interaction.user):
+        await interaction.response.send_message("❌ Du hast keine Berechtigung für diesen Befehl!", ephemeral=True)
+        return
+    
     if peak < 0 or dauer < 0:
         await interaction.response.send_message("❌ Ungültige Werte! Bitte gib positive Zahlen ein.", ephemeral=True)
         return
-
-    # 🔹 Korrigierte Punkte-Berechnung
-    punkte_dauer = (dauer // 6)  # 1 Stunde = 10 Punkte
-    punkte_peak = (peak // 5)  # 5 Zuschauer = 1 Punkt
+    
+    punkte_dauer = (dauer // 6)
+    punkte_peak = (peak // 5)
     gesamt_punkte = punkte_dauer + punkte_peak
-
+    
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE streamer_punkte SET gesamt_punkte = gesamt_punkte + %s, monatliche_punkte = monatliche_punkte + %s, shopping_punkte = shopping_punkte + %s WHERE discord_name = %s",
-                   (gesamt_punkte, gesamt_punkte, gesamt_punkte, str(member)))
+    cursor.execute("UPDATE streamer_punkte SET gesamt_punkte = gesamt_punkte + %s, monatliche_punkte = monatliche_punkte + %s, shopping_punkte = shopping_punkte + %s WHERE discord_id = %s",
+                   (gesamt_punkte, gesamt_punkte, gesamt_punkte, member.id))
     conn.commit()
     conn.close()
 
     await interaction.response.send_message(f"✅ **{member.display_name}** hat **{gesamt_punkte}** Punkte erhalten! 🎉")
 
-# ✅ Leaderboard abrufen & posten (Tägliche Aktualisierung)
-async def update_leaderboard():
-    await bot.wait_until_ready()
-    channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
-    if not channel:
-        print("❌ Leaderboard-Kanal nicht gefunden!")
+# ✅ Leaderboard abrufen & posten (Nur Admins)
+@tree.command(name="leaderboard", description="Admin: Zeigt das Leaderboard der besten Streamer.")
+async def leaderboard(interaction: discord.Interaction):
+    if not is_admin(interaction.user):
+        await interaction.response.send_message("❌ Du hast keine Berechtigung für diesen Befehl!", ephemeral=True)
         return
+    
+    await update_leaderboard()
+    await interaction.response.send_message("✅ Leaderboard wurde aktualisiert!")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT discord_name, gesamt_punkte FROM streamer_punkte ORDER BY gesamt_punkte DESC LIMIT 10")
-    results = cursor.fetchall()
-    conn.close()
-
-    if not results:
-        await channel.send("⚠ Kein Leaderboard verfügbar.")
-        return
-
-    # 📌 Leaderboard Embed erstellen
-    embed = discord.Embed(
-        title="🏆 **Tägliches LiveFusion Leaderboard** 🏆",
-        description=f"📅 **{datetime.datetime.now().strftime('%d.%m.%Y')}**\n\nHier sind die **Top 10 Streamer** mit den meisten Punkten!",
-        color=discord.Color.gold()
-    )
-
-    for i, (name, punkte) in enumerate(results, start=1):
-        rank_medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"#{i}"
-        embed.add_field(name=f"{rank_medal} {name}", value=f"🔥 **{punkte} Punkte**", inline=False)
-
-    embed.set_footer(text="LiveFusion • Bleib aktiv & sammel Punkte! 🚀")
-
-    await channel.send(embed=embed)
-
-# 🔹 Automatisches Leaderboard Update
+# 🔹 Automatisches Leaderboard Update (Täglich um 00:00 Uhr)
 async def leaderboard_task():
     while True:
         now = datetime.datetime.now()
@@ -111,70 +98,39 @@ async def leaderboard_task():
         await asyncio.sleep(seconds_until_next_run)
         await update_leaderboard()
 
-@tree.command(name="addstreamer", description="Fügt einen neuen Streamer zur Datenbank hinzu.")
-async def addstreamer(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    tiktok_name: str,
-    email: str,
-    handynummer: str,
-    strasse: str,
-    hausnummer: str,
-    plz: str,
-    ort: str,
-    land: str
-):
-    print(f"📌 Befehl /addstreamer wurde von {interaction.user} aufgerufen!")  # Debugging-Ausgabe
-
+# ✅ Shop anzeigen (Nur "🔥 Aktive Streamer")
+@tree.command(name="shop", description="Zeigt alle verfügbaren Belohnungen im Punkteshop.")
+async def shop(interaction: discord.Interaction):
+    if not is_active_streamer(interaction.user):
+        await interaction.response.send_message("❌ Du hast keine Berechtigung für diesen Befehl!", ephemeral=True)
+        return
+    
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    # Prüfen, ob der Nutzer bereits existiert
-    cursor.execute("SELECT id FROM streamer_punkte WHERE discord_id = %s", (member.id,))
-    result = cursor.fetchone()
-
-    if result:
-        print(f"⚠ {member.display_name} ist bereits in der Datenbank!")  # Debugging-Ausgabe
-        await interaction.response.send_message(f"⚠ **{member.display_name}** ist bereits in der Datenbank!", ephemeral=True)
-    else:
-        cursor.execute("""
-            INSERT INTO streamer_punkte (discord_id, discord_name, tiktok_name, email, handynummer, strasse, hausnummer, plz, ort, land, start_datum, gesamt_punkte, monatliche_punkte, shopping_punkte)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 0, 0, 0)
-        """, (member.id, str(member), tiktok_name, email, handynummer, strasse, hausnummer, plz, ort, land))
-        
-        conn.commit()
-        print(f"✅ {member.display_name} wurde in die Datenbank hinzugefügt!")  # Debugging-Ausgabe
-        await interaction.response.send_message(f"✅ **{member.display_name}** wurde erfolgreich als Streamer hinzugefügt!", ephemeral=False)
-
+    cursor.execute("SELECT belohnung, kosten FROM streamer_belohnungen ORDER BY kosten ASC")
+    results = cursor.fetchall()
     conn.close()
 
+    if not results:
+        await interaction.response.send_message("⚠ Der Shop ist derzeit leer!", ephemeral=True)
+        return
+
+    shop_text = "**🎁 LiveFusion Punkteshop 🎁**\n\n"
+    for belohnung, kosten in results:
+        shop_text += f"🔹 **{belohnung}** ➝ `{kosten} Punkte`\n"
+
+    await interaction.response.send_message(shop_text)
 
 @bot.event
 async def on_ready():
     global tree
-
-    # 🔹 Debugging: Prüfen, ob GUILD_ID eine Zahl ist
-    print(f"🔍 GUILD_ID ist: {GUILD_ID} (Typ: {type(GUILD_ID)})")
-
+    print(f"✅ Bot ist eingeloggt als {bot.user}!")
     try:
-        guild = discord.Object(id=int(GUILD_ID))  # Sicherstellen, dass es eine Zahl ist
-        await tree.sync(guild=guild)  
-        print(f"✅ Slash-Befehle erfolgreich für Server-ID {GUILD_ID} synchronisiert!")
-
-        # 🔹 Debugging: Registrierte Befehle ausgeben
-        for command in tree.get_commands():
-            print(f"📌 Registrierter Slash-Befehl: {command.name}")
-
+        guild = discord.Object(id=int(GUILD_ID))
+        await tree.sync(guild=guild)
+        print(f"✅ Slash-Befehle erfolgreich synchronisiert!")
     except Exception as e:
         print(f"❌ Fehler bei der Befehls-Registrierung: {e}")
-
-    print(f"✅ Bot ist eingeloggt als {bot.user}!")
-    #bot.loop.create_task(leaderboard_task())  # Startet die tägliche Leaderboard-Task
-
-@tree.command(name="sync", description="Synchronisiert die Slash-Befehle mit Discord.")
-async def sync(interaction: discord.Interaction):
-    await tree.sync()
-    await interaction.response.send_message("✅ Slash-Befehle wurden aktualisiert!", ephemeral=True)
-
+    bot.loop.create_task(leaderboard_task())
 
 bot.run(TOKEN)
