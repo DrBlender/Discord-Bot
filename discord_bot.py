@@ -112,13 +112,25 @@ async def leaderboard_task():
         await update_leaderboard()
 
 @tree.command(name="addstreamer", description="Fügt einen neuen Streamer zur Datenbank hinzu.")
-async def addstreamer(interaction: discord.Interaction, member: discord.Member, email: str, handynummer: str, strasse: str, hausnummer: str, plz: str, ort: str, land: str):
+async def addstreamer(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    tiktok_name: str,
+    email: str,
+    handynummer: str,
+    strasse: str,
+    hausnummer: str,
+    plz: str,
+    ort: str,
+    land: str
+):
     print(f"📌 Befehl /addstreamer wurde von {interaction.user} aufgerufen!")  # Debugging-Ausgabe
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id FROM streamer_punkte WHERE discord_name = %s", (str(member),))
+    # Prüfen, ob der Nutzer bereits existiert
+    cursor.execute("SELECT id FROM streamer_punkte WHERE discord_id = %s", (member.id,))
     result = cursor.fetchone()
 
     if result:
@@ -126,15 +138,16 @@ async def addstreamer(interaction: discord.Interaction, member: discord.Member, 
         await interaction.response.send_message(f"⚠ **{member.display_name}** ist bereits in der Datenbank!", ephemeral=True)
     else:
         cursor.execute("""
-            INSERT INTO streamer_punkte (tiktok_name, vorname, nachname, email, handynummer, discord_name, start_datum, strasse, hausnummer, plz, ort, land, gesamt_punkte, monatliche_punkte, shopping_punkte)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s, 0, 0, 0)
-        """, (member.name, member.display_name, "", email, handynummer, str(member), strasse, hausnummer, plz, ort, land))
+            INSERT INTO streamer_punkte (discord_id, discord_name, tiktok_name, email, handynummer, strasse, hausnummer, plz, ort, land, start_datum, gesamt_punkte, monatliche_punkte, shopping_punkte)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 0, 0, 0)
+        """, (member.id, str(member), tiktok_name, email, handynummer, strasse, hausnummer, plz, ort, land))
         
         conn.commit()
         print(f"✅ {member.display_name} wurde in die Datenbank hinzugefügt!")  # Debugging-Ausgabe
         await interaction.response.send_message(f"✅ **{member.display_name}** wurde erfolgreich als Streamer hinzugefügt!", ephemeral=False)
 
     conn.close()
+
 
 @bot.event
 async def on_ready():
