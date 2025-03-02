@@ -171,6 +171,10 @@ async def on_ready():
     print(f"✅ Bot ist eingeloggt als {bot.user}!")
     #bot.loop.create_task(leaderboard_task())  # Startet die tägliche Leaderboard-Task
 
+@tree.command(name="sync", description="Synchronisiert die Slash-Befehle mit Discord.")
+async def sync(interaction: discord.Interaction):
+    await tree.sync()
+    await interaction.response.send_message("✅ Slash-Befehle wurden aktualisiert!", ephemeral=True)
 
 
 bot.run(TOKEN)
