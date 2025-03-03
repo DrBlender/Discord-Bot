@@ -125,12 +125,20 @@ async def shop(interaction: discord.Interaction):
 async def on_ready():
     global tree
     print(f"✅ Bot ist eingeloggt als {bot.user}!")
+
     try:
-        guild = discord.Object(id=int(GUILD_ID))
-        await tree.sync(guild=guild)
-        print(f"✅ Slash-Befehle erfolgreich synchronisiert!")
+        guild = discord.Object(id=int(GUILD_ID))  # Sicherstellen, dass es eine Zahl ist
+        await tree.sync(guild=guild)  # Synchronisiert die Slash-Befehle
+        print(f"✅ Slash-Befehle erfolgreich für Server-ID {GUILD_ID} synchronisiert!")
+
     except Exception as e:
         print(f"❌ Fehler bei der Befehls-Registrierung: {e}")
-    bot.loop.create_task(leaderboard_task())
+
+    print("📌 Registrierte Befehle:")
+    for command in tree.get_commands():
+        print(f"🔹 {command.name}")
+
+    bot.loop.create_task(leaderboard_task())  # Startet Leaderboard-Update
+
 
 bot.run(TOKEN)
